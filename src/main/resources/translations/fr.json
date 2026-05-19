@@ -1,0 +1,18 @@
+{
+    "AI_REVIEW": {
+        "ACTION_OPEN":  "Revue IA des sessions",
+        "MODAL_TITLE":  "Revue IA des sessions",
+        "LOADING":      "Chargement des sessions…",
+        "EMPTY":        "Aucune session analysée pour l'instant.",
+        "COL_SESSION":  "Session",
+        "COL_USER":     "Utilisateur",
+        "COL_STATUS":   "Statut",
+        "COL_RISK":     "Risque",
+        "COL_SUMMARY":  "Résumé",
+        "BACK":         "Retour à la liste",
+        "RISK":         "Niveau de risque",
+        "SUMMARY":      "Résumé",
+        "EVENTS":       "Événements suspects",
+        "NO_EVENTS":    "Aucun événement suspect signalé."
+    }
+}

@@ -1,0 +1,18 @@
+{
+    "AI_REVIEW": {
+        "ACTION_OPEN":  "AI Session Review",
+        "MODAL_TITLE":  "AI Session Review",
+        "LOADING":      "Loading sessions…",
+        "EMPTY":        "No sessions have been analyzed yet.",
+        "COL_SESSION":  "Session",
+        "COL_USER":     "User",
+        "COL_STATUS":   "Status",
+        "COL_RISK":     "Risk",
+        "COL_SUMMARY":  "Summary",
+        "BACK":         "Back to list",
+        "RISK":         "Risk level",
+        "SUMMARY":      "Summary",
+        "EVENTS":       "Suspicious events",
+        "NO_EVENTS":    "No suspicious events were flagged."
+    }
+}

@@ -1,0 +1,27 @@
+{
+    "guacamoleVersion": "1.6.0",
+    "name": "AI Session Review",
+    "namespace": "ai-session-review",
+
+    "authProviders": [
+        "edu.example.guacamole.ai.AiReviewAuthenticationProvider"
+    ],
+
+    "js": [
+        "js/ai-review.js"
+    ],
+
+    "css": [
+        "css/ai-review.css"
+    ],
+
+    "html": [
+        "html/menu-item.html",
+        "html/modal.html"
+    ],
+
+    "translations": [
+        "translations/en.json",
+        "translations/fr.json"
+    ]
+}

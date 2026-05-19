@@ -1,0 +1,98 @@
+<meta name="after-children" content=".user-menu">
+
+<div class="ai-review-overlay"
+     ng-if="$root.aiReview"
+     ng-show="$root.aiReview.visible"
+     ng-click="$root.aiReview.close()">
+
+    <div class="ai-review-modal" ng-click="$event.stopPropagation()">
+
+        <header class="ai-review-header">
+            <h1>{{'AI_REVIEW.MODAL_TITLE' | translate}}</h1>
+            <button type="button" class="ai-review-close"
+                    ng-click="$root.aiReview.close()"
+                    aria-label="Close">&times;</button>
+        </header>
+
+        <div class="ai-review-loading" ng-show="$root.aiReview.loading">
+            {{'AI_REVIEW.LOADING' | translate}}
+        </div>
+
+        <div class="ai-review-error" ng-show="$root.aiReview.error">
+            {{$root.aiReview.error}}
+        </div>
+
+        <!-- LIST VIEW -->
+        <table class="ai-review-list"
+               ng-hide="$root.aiReview.loading || $root.aiReview.selected">
+            <thead>
+                <tr>
+                    <th>{{'AI_REVIEW.COL_SESSION' | translate}}</th>
+                    <th>{{'AI_REVIEW.COL_USER' | translate}}</th>
+                    <th>{{'AI_REVIEW.COL_STATUS' | translate}}</th>
+                    <th>{{'AI_REVIEW.COL_RISK' | translate}}</th>
+                    <th>{{'AI_REVIEW.COL_SUMMARY' | translate}}</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr ng-repeat="s in $root.aiReview.summaries"
+                    ng-click="$root.aiReview.select(s)"
+                    class="ai-review-row">
+                    <td><code>{{s.historyUuid.substr(0,8)}}…</code></td>
+                    <td>{{s.username || '—'}}</td>
+                    <td>{{s.status}}</td>
+                    <td>
+                        <span class="ai-review-risk-badge risk-{{s.riskLevel || 'unknown'}}">
+                            {{s.riskLevel || '—'}}
+                        </span>
+                    </td>
+                    <td class="ai-review-truncate">{{s.summary || ''}}</td>
+                </tr>
+                <tr ng-if="!$root.aiReview.summaries.length">
+                    <td colspan="5" class="ai-review-empty">
+                        {{'AI_REVIEW.EMPTY' | translate}}
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- DETAIL VIEW -->
+        <div class="ai-review-detail" ng-show="$root.aiReview.selected">
+            <button type="button" class="ai-review-back"
+                    ng-click="$root.aiReview.deselect()">
+                &larr; {{'AI_REVIEW.BACK' | translate}}
+            </button>
+
+            <h2><code>{{$root.aiReview.selected.historyUuid}}</code></h2>
+
+            <dl class="ai-review-meta">
+                <dt>{{'AI_REVIEW.RISK' | translate}}</dt>
+                <dd>
+                    <span class="ai-review-risk-badge risk-{{$root.aiReview.selected.riskLevel || 'unknown'}}">
+                        {{$root.aiReview.selected.riskLevel || '—'}}
+                    </span>
+                </dd>
+                <dt>{{'AI_REVIEW.COL_STATUS' | translate}}</dt>
+                <dd>{{$root.aiReview.selected.status}}</dd>
+                <dt>{{'AI_REVIEW.SUMMARY' | translate}}</dt>
+                <dd>{{$root.aiReview.selected.summary || '—'}}</dd>
+            </dl>
+
+            <h3>{{'AI_REVIEW.EVENTS' | translate}}</h3>
+            <ul class="ai-review-events">
+                <li ng-repeat="e in $root.aiReview.events">
+                    <span class="ai-review-risk-badge risk-{{e.severity || 'unknown'}}">
+                        {{e.severity || '—'}}
+                    </span>
+                    <span class="ai-review-event-time">{{e.eventTimeSeconds}}s</span>
+                    <strong>{{e.category || '—'}}</strong>
+                    — {{e.description || ''}}
+                </li>
+                <li ng-if="!$root.aiReview.events.length" class="ai-review-empty">
+                    {{'AI_REVIEW.NO_EVENTS' | translate}}
+                </li>
+            </ul>
+        </div>
+
+    </div>
+</div>
