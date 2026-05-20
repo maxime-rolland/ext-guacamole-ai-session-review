@@ -28,7 +28,9 @@
             <thead>
                 <tr>
                     <th>{{'AI_REVIEW.COL_SESSION' | translate}}</th>
+                    <th>{{'AI_REVIEW.COL_TIME' | translate}}</th>
                     <th>{{'AI_REVIEW.COL_USER' | translate}}</th>
+                    <th>{{'AI_REVIEW.COL_MACHINE' | translate}}</th>
                     <th>{{'AI_REVIEW.COL_STATUS' | translate}}</th>
                     <th>{{'AI_REVIEW.COL_RISK' | translate}}</th>
                     <th>{{'AI_REVIEW.COL_SUMMARY' | translate}}</th>
@@ -39,7 +41,9 @@
                     ng-click="$root.aiReview.select(s)"
                     class="ai-review-row">
                     <td><code>{{s.historyUuid.substr(0,8)}}…</code></td>
+                    <td>{{(s.startedAt | date:'dd/MM/yyyy HH:mm') || '—'}}</td>
                     <td>{{s.username || '—'}}</td>
+                    <td>{{s.connectionName || '—'}}</td>
                     <td>{{s.status}}</td>
                     <td>
                         <span class="ai-review-risk-badge risk-{{s.riskLevel || 'unknown'}}">
@@ -49,7 +53,7 @@
                     <td class="ai-review-truncate">{{s.summary || ''}}</td>
                 </tr>
                 <tr ng-if="!$root.aiReview.summaries.length">
-                    <td colspan="5" class="ai-review-empty">
+                    <td colspan="7" class="ai-review-empty">
                         {{'AI_REVIEW.EMPTY' | translate}}
                     </td>
                 </tr>
@@ -66,6 +70,14 @@
             <h2><code>{{$root.aiReview.selected.historyUuid}}</code></h2>
 
             <dl class="ai-review-meta">
+                <dt>{{'AI_REVIEW.COL_USER' | translate}}</dt>
+                <dd>{{$root.aiReview.selected.username || '—'}}</dd>
+                <dt>{{'AI_REVIEW.MACHINE' | translate}}</dt>
+                <dd>{{$root.aiReview.selected.connectionName || '—'}}</dd>
+                <dt>{{'AI_REVIEW.STARTED' | translate}}</dt>
+                <dd>{{($root.aiReview.selected.startedAt | date:'dd/MM/yyyy HH:mm:ss') || '—'}}</dd>
+                <dt>{{'AI_REVIEW.ENDED' | translate}}</dt>
+                <dd>{{($root.aiReview.selected.endedAt | date:'dd/MM/yyyy HH:mm:ss') || '—'}}</dd>
                 <dt>{{'AI_REVIEW.RISK' | translate}}</dt>
                 <dd>
                     <span class="ai-review-risk-badge risk-{{$root.aiReview.selected.riskLevel || 'unknown'}}">

@@ -32,9 +32,11 @@ import json
 import logging
 import os
 import re
+import struct
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,6 +45,11 @@ import pymysql
 LOG = logging.getLogger("guac-ai-worker")
 
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+# Namespace UUID utilisé par guacamole-auth-jdbc pour dériver le UUID
+# déterministe d'une entrée d'historique (ConnectionRecordSet.UUID_NAMESPACE).
+# Ce UUID est aussi le nom du dossier de l'enregistrement dans records/.
+_HISTORY_UUID_NS = uuid.UUID("8b55f070-95f4-3d31-93ee-9c5845e7aa40").bytes
 
 
 def env(name: str, default: str) -> str:
@@ -158,6 +165,31 @@ def mark_failed(conn, history_uuid: str, error: str):
     conn.commit()
 
 
+def mark_skipped(conn, history_uuid: str, started_at, ended_at, reason: str):
+    """Statut terminal pour une session impossible à analyser — et qui ne
+    traduit *pas* un bug du worker : enregistrement vide, connexion
+    refusée par le serveur distant... Contrairement à 'analyzing', n'est
+    jamais rejouée automatiquement."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO session_ai_summary
+                (history_uuid, status, started_at, ended_at, summary, error)
+            VALUES (%s, 'skipped', %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                status     = 'skipped',
+                started_at = COALESCE(VALUES(started_at), started_at),
+                ended_at   = COALESCE(VALUES(ended_at),   ended_at),
+                summary    = VALUES(summary),
+                risk_level = NULL,
+                error      = VALUES(error)
+            """,
+            (history_uuid, started_at, ended_at,
+             f"Session non analysée : {reason}", reason[:8000]),
+        )
+    conn.commit()
+
+
 def save_result(conn, history_uuid: str, parsed: dict):
     summary = parsed.get("summary") or ""
     risk = parsed.get("risk_level") or "unknown"
@@ -191,6 +223,63 @@ def save_result(conn, history_uuid: str, parsed: dict):
                 ),
             )
     conn.commit()
+
+
+# ---------- enrichissement métadonnées ----------
+
+def record_uuid(record_id: int) -> str:
+    """UUID déterministe d'une entrée guacamole_connection_history.
+
+    Reproduit ModeledActivityRecord#getUUID de guacamole-auth-jdbc :
+    MD5 du namespace ConnectionRecordSet.UUID_NAMESPACE concaténé à
+    l'history_id encodé en long big-endian, avec les bits de version (3)
+    et de variant forcés — exactement java.util.UUID.nameUUIDFromBytes.
+    C'est ce UUID qui nomme le dossier de l'enregistrement dans records/."""
+    digest = bytearray(hashlib.md5(
+        _HISTORY_UUID_NS + struct.pack(">q", record_id)
+    ).digest())
+    digest[6] = (digest[6] & 0x0f) | 0x30   # version 3
+    digest[8] = (digest[8] & 0x3f) | 0x80   # variant RFC 4122
+    return str(uuid.UUID(bytes=bytes(digest)))
+
+
+def reconcile_metadata(conn):
+    """Renseigne username / connection_name / started_at / ended_at des
+    résumés depuis guacamole_connection_history.
+
+    Le lien dossier d'enregistrement <-> entrée d'historique se fait via
+    le UUID déterministe de Guacamole (record_uuid). Idempotent : seules
+    les lignes encore dépourvues d'username sont traitées."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT history_uuid FROM session_ai_summary "
+                    "WHERE username IS NULL")
+        pending = [r[0] for r in cur.fetchall()]
+    if not pending:
+        return
+    with conn.cursor() as cur:
+        cur.execute("SELECT history_id, username, connection_name, "
+                    "start_date, end_date FROM guacamole_connection_history")
+        by_uuid = {record_uuid(r[0]): r for r in cur.fetchall()}
+    updated = 0
+    with conn.cursor() as cur:
+        for hu in pending:
+            row = by_uuid.get(hu)
+            if row is None:
+                continue
+            _, username, connection_name, start_date, end_date = row
+            cur.execute(
+                "UPDATE session_ai_summary SET "
+                "username = %s, connection_name = %s, "
+                "started_at = COALESCE(%s, started_at), "
+                "ended_at   = COALESCE(%s, ended_at) "
+                "WHERE history_uuid = %s",
+                (username, connection_name, start_date, end_date, hu),
+            )
+            updated += 1
+    conn.commit()
+    if updated:
+        LOG.info("reconcile_metadata: %d session(s) enrichie(s) "
+                 "depuis guacamole_connection_history", updated)
 
 
 # ---------- extract / parse ----------
@@ -237,6 +326,59 @@ def extract_recording_metadata(recording: Path):
         duration_s = (syncs[-1] - syncs[0]) / 1000.0
     resolution = f"{width}x{height}" if width and height else None
     return resolution, duration_s
+
+
+def _guac_elements(instr: str):
+    """Découpe une instruction du protocole Guacamole en éléments.
+
+    Chaque élément est encodé `LONGUEUR.VALEUR` ; le préfixe de longueur
+    permet de gérer les virgules présentes à l'intérieur d'une valeur
+    (ex. un message d'erreur)."""
+    out = []
+    i = 0
+    while i < len(instr):
+        dot = instr.find(".", i)
+        if dot == -1:
+            break
+        try:
+            length = int(instr[i:dot])
+        except ValueError:
+            break
+        out.append(instr[dot + 1:dot + 1 + length])
+        i = dot + 1 + length + 1  # saute la virgule séparatrice
+    return out
+
+
+# Opcodes qui dessinent réellement à l'écran. Leur absence totale d'un
+# dump = enregistrement sans image exploitable (connexion refusée, etc.).
+_DRAW_OPCODES = {"img", "png", "blob", "rect", "cfill", "copy", "cursor"}
+
+
+def recording_is_empty(recording: Path):
+    """Détecte un dump qui ne produira aucune frame exploitable.
+
+    Une connexion refusée par le serveur distant ne génère qu'une
+    instruction `error` suivie de `end` — aucun dessin d'écran, donc
+    guacenc encode une vidéo de durée nulle et l'extraction rend 0 frame.
+
+    Renvoie (True, raison) si le dump est inexploitable, (False, None)
+    sinon."""
+    with recording.open("rb") as fh:
+        data = fh.read().decode("latin-1", errors="ignore")
+    error_msg = None
+    for raw in data.split(";"):
+        raw = raw.strip()
+        if not raw:
+            continue
+        els = _guac_elements(raw)
+        if not els:
+            continue
+        opcode = els[0]
+        if opcode in _DRAW_OPCODES:
+            return False, None
+        if opcode == "error" and len(els) >= 2 and els[1]:
+            error_msg = els[1]
+    return True, error_msg or "enregistrement sans contenu d'écran"
 
 
 def extract_frames(session_dir: Path, cfg_):
@@ -376,9 +518,13 @@ def process_session(session_dir: Path, recording: Path, conn, cfg_):
     uuid = session_dir.name
     LOG.info("=== %s ===", uuid)
 
+    # Statuts terminaux : on ne rejoue jamais automatiquement, sinon une
+    # session non analysable est ré-encodée par guacenc à chaque tick (60 s)
+    # indéfiniment. Pour forcer une réanalyse : DELETE FROM session_ai_summary
+    # (cf. CLAUDE.md §7bis).
     existing = status_for(conn, uuid)
-    if existing == "done":
-        LOG.info("[skip] déjà analysé (status=done)")
+    if existing in ("done", "skipped", "failed"):
+        LOG.info("[skip] statut terminal en base (status=%s)", existing)
         return
     if existing == "analyzing":
         # session_lock empêche déjà la concurrence locale. Si on retombe
@@ -393,6 +539,15 @@ def process_session(session_dir: Path, recording: Path, conn, cfg_):
         recording.stat().st_mtime, tz=timezone.utc
     ).replace(tzinfo=None)
 
+    # Un dump sans contenu d'écran (connexion refusée, session vide) ne
+    # produira aucune frame : inutile de lancer guacenc. On le classe en
+    # 'skipped' plutôt que 'failed' — ce n'est pas un échec du worker.
+    empty, reason = recording_is_empty(recording)
+    if empty:
+        LOG.info("[skip] enregistrement non analysable : %s", reason)
+        mark_skipped(conn, uuid, started_at, ended_at, reason)
+        return
+
     mark_analyzing(conn, uuid, started_at, ended_at)
 
     try:
@@ -405,7 +560,12 @@ def process_session(session_dir: Path, recording: Path, conn, cfg_):
         meta = extract_recording_metadata(recording)
         sample = sample_frames(frames_dir, cfg_["max_frames"])
         if not sample:
-            raise RuntimeError("aucune frame produite")
+            # guacenc a tourné mais n'a rien produit d'exploitable : ce
+            # n'est pas un bug du worker -> statut terminal 'skipped'.
+            LOG.info("[skip] guacenc n'a produit aucune frame exploitable")
+            mark_skipped(conn, uuid, started_at, ended_at,
+                         "guacenc n'a produit aucune frame exploitable")
+            return
 
         raw = call_gemini(session_dir, sample, meta, cfg_)
         (session_dir / "analysis.json").write_text(raw, encoding="utf-8")
@@ -423,6 +583,10 @@ def process_session(session_dir: Path, recording: Path, conn, cfg_):
 
 def tick(cfg_):
     with db_conn(cfg_) as conn:
+        try:
+            reconcile_metadata(conn)
+        except pymysql.Error:
+            LOG.exception("reconcile_metadata a échoué, on continue")
         for session_dir, recording in candidate_sessions(cfg_["records_dir"]):
             with session_lock(session_dir) as acquired:
                 if not acquired:

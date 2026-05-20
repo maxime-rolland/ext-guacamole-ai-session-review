@@ -15,10 +15,10 @@ CREATE TABLE IF NOT EXISTS session_ai_summary (
     connection_name VARCHAR(255) DEFAULT NULL,
     started_at      DATETIME     DEFAULT NULL,
     ended_at        DATETIME     DEFAULT NULL,
-    status          VARCHAR(50)  NOT NULL,   -- analyzing | done | failed
+    status          VARCHAR(50)  NOT NULL,   -- analyzing | done | failed | skipped
     summary         TEXT,
     risk_level      VARCHAR(20),
-    error           TEXT,                    -- renseigné si status = 'failed'
+    error           TEXT,                    -- renseigné si status = 'failed' ou 'skipped'
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_status     (status),

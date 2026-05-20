@@ -237,16 +237,27 @@ Le lot 2 est en place. Le worker est un service docker-compose, image construite
 - **UID 1000 dans le container** (le user `node` de l'image renommé en `worker`, HOME=/home/user). Toutes les sorties (`analysis.json`, frames, locks) restent propriété du user hôte.
 - **Docker socket monté** pour que le worker puisse lancer `guacenc-extract`. `group_add: 989` ajoute le GID `docker` hôte au container.
 - **OAuth Gemini partagé** via `/home/user/.gemini` bind-monté. Pas de clé API à configurer ; on réutilise l'auth interactive faite sur l'hôte.
-- **Idempotence** :
-  - status `done` en base → skip ;
+- **Idempotence / statuts terminaux** :
+  - status `done`, `failed` ou `skipped` en base → skip (jamais rejoué
+    automatiquement ; forcer via `DELETE FROM session_ai_summary`) ;
   - status `analyzing` → retry (un précédent run a planté avant `save_result`) ;
+  - `skipped` = enregistrement non analysable (connexion refusée, dump vide) —
+    distinct de `failed` qui signale un vrai échec du worker. Un dump sans
+    instruction de dessin est détecté **avant** guacenc (pas de ré-encodage) ;
   - `frames/` déjà peuplé → on saute `guacenc-extract`.
 - **Prompt** : adapté de `guac-agent/analyze-one.sh`, demande du JSON pur conforme à [README.md §Pipeline d'analyse IA](README.md). Réponse parsée et insérée dans `session_ai_summary` + `suspicious_event`. `analysis.json` brut conservé à côté du `recording` (cf. [README.md §Convention pivot](README.md)).
 - **DB** : `127.0.0.1:3306` publié sur l'hôte (loopback uniquement) pour le debug avec `mysql` client ; le worker passe par le réseau Docker (`DB_HOST=db`).
+- **Métadonnées de session** : `reconcile_metadata()` renseigne `username` /
+  `connection_name` / `started_at` / `ended_at` des résumés depuis
+  `guacamole_connection_history`, à chaque tick. Le lien dossier ↔ entrée
+  d'historique passe par le **UUID déterministe de Guacamole** :
+  `nameUUIDFromBytes(ConnectionRecordSet.UUID_NAMESPACE ‖ history_id)` —
+  namespace `8b55f070-95f4-3d31-93ee-9c5845e7aa40`, `history_id` en `long`
+  big-endian — reproduit par `record_uuid()` et vérifié sur les 7 sessions
+  de `records/`.
 
 **Limites connues (à cracker plus tard) :**
 
-- `username` / `connection_name` restent `NULL`. La dérivation `<UUID dossier dans records/>` ↔ `guacamole_connection_history.history_id` n'est pas évidente : ni `UUID.nameUUIDFromBytes(history_id)`, ni `nameUUIDFromBytes(startDate \0 history_id)` ne donnent les UUID observés sur disque. Le mapping est à trouver dans le code de `guacamole-history-recording-storage` (extension officielle). En attendant, le worker remplit `started_at`/`ended_at` depuis le `mtime`/`ctime` du dossier — approximatif mais utilisable.
 - Le LLM peut occasionnellement enrober son JSON de balises markdown malgré la consigne. `parse_llm_output` extrait alors entre la première `{` et la dernière `}` ; on a vu des cas où c'est insuffisant. Mettre `analysis.json` sous les yeux pour debug.
 
 **Commandes utiles :**
